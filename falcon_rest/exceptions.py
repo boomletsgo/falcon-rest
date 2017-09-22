@@ -1,0 +1,2 @@
+class FalconRestException(Exception):
+    pass
