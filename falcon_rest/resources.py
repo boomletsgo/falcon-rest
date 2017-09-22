@@ -2,6 +2,7 @@ import datetime
 
 import falcon
 from falcon_rest import exceptions, session
+import sqlalchemy
 
 
 class BaseResource(object):
@@ -36,16 +37,13 @@ class BaseResource(object):
         response.json = data
 
     def retrieve(self, request, id):
-        data = self.data_retrieve(id)
+        data = self.data_retrieve(request, id)
         data = self.serialize_retrieve(data)
 
         return data
 
-    def data_retrieve(self, id):
+    def data_retrieve(self, request, id):
         return {}
-
-    def data_list(self, data_filters):
-        return []
 
     def serialize_retrieve(self, data):
         serializer = getattr(self, "retrieve_serializer", getattr(self, "serializer", None))
@@ -58,10 +56,13 @@ class BaseResource(object):
         return data
 
     def list(self, request, data_filters):
-        data = self.data_list(data_filters)
+        data = self.data_list(request, data_filters)
         data = self.serialize_list(data)
 
         return data
+
+    def data_list(self, request, data_filters, db_session):
+        return []
 
     def serialize_list(self, data):
         serializer = getattr(self, "list_serializer", getattr(self, "serializer", None))
@@ -80,18 +81,18 @@ class BaseResource(object):
         if not isinstance(dataset, list):
             dataset = [dataset]
 
-        created = self.create(dataset)
+        created = self.create(request, dataset)
         created = self.meta_data(created)
 
         response.json = created
 
-    def create(self, dataset):
-        dataset = self.data_create(dataset)
+    def create(self, request, dataset):
+        dataset = self.data_create(request, dataset)
         dataset = self.serialize_create(dataset)
 
         return dataset
 
-    def data_create(self, dataset):
+    def data_create(self, request, dataset):
         return dataset
 
     def serialize_create(self, dataset):
@@ -111,18 +112,18 @@ class BaseResource(object):
         if not isinstance(dataset, list):
             dataset = [dataset]
 
-        patched = self.patch(dataset, kwargs.get(self.id_param))
+        patched = self.patch(request, dataset, kwargs.get(self.id_param))
         patched = self.meta_data(patched)
 
         response.json = patched
 
-    def patch(self, dataset, id):
-        dataset = self.data_patch(dataset, id)
+    def patch(self, request, dataset, id):
+        dataset = self.data_patch(request, dataset, id)
         dataset = self.serialize_patch(dataset)
 
         return dataset
 
-    def data_patch(self, dataset):
+    def data_patch(self, request, dataset):
         return dataset
 
     def serialize_patch(self, dataset):
@@ -142,15 +143,15 @@ class BaseResource(object):
         if not isinstance(dataset, list):
             dataset = [dataset]
 
-        self.delete(dataset, kwargs.get(self.id_param))
+        self.delete(request, dataset, kwargs.get(self.id_param))
         deleted = self.meta_data({"status": "deleted"})
 
         response.json = deleted
 
-    def delete(self, dataset, id):
-        self.data_delete(dataset, id)
+    def delete(self, request, dataset, id):
+        self.data_delete(request, dataset, id)
 
-    def data_delete(self, dataset):
+    def data_delete(self, request, dataset):
         pass
 
 
@@ -165,30 +166,34 @@ class ModelResource(BaseResource):
 
     def retrieve(self, request, id):
         with session.make(self.db_engine) as db_session:
-            data = self.data_retrieve(id, db_session)
+            data = self.data_retrieve(request, id, db_session)
             data = self.serialize_retrieve(data)
 
         return data
 
-    def data_retrieve(self, id, db_session):
+    def data_retrieve(self, request, id, db_session):
         params = {self.id_field: id}
-        result = db_session.query(self.model).filter_by(**params).first()
+
+        result = db_session.query(self.model).filter_by(**params)
+        result = result.options(sqlalchemy.orm.joinedload("*"))
+        result = result.first()
+
         return result
 
     def list(self, request, data_filters):
         with session.make(self.db_engine) as db_session:
-            data = self.data_list(data_filters, db_session)
+            data = self.data_list(request, data_filters, db_session)
             data = self.serialize_list(data)
 
         return data
 
-    def data_list(self, data_filters, db_session):
+    def data_list(self, request, data_filters, db_session):
         result = db_session.query(self.model).filter_by(**data_filters)
         return result
 
-    def create(self, dataset):
+    def create(self, request, dataset):
         with session.make(self.db_engine) as db_session:
-            dataset = self.data_create(dataset, db_session)
+            dataset = self.data_create(request, dataset, db_session)
 
             try:
                 dataset = self.serialize_create(dataset)
@@ -198,11 +203,13 @@ class ModelResource(BaseResource):
 
         return dataset
 
-    def data_create(self, dataset, db_session):
+    def data_create(self, request, dataset, db_session):
         models = []
 
         for data in dataset:
-            models.append(self.model(**data))
+            model = self.data_set(self.model, data)
+            model = self.before_save(request, model, db_session)
+            models.append(model)
 
         if models:
             db_session.add_all(models)
@@ -215,9 +222,9 @@ class ModelResource(BaseResource):
 
         return models
 
-    def patch(self, dataset, id):
+    def patch(self, request, dataset, id):
         with session.make(self.db_engine) as db_session:
-            dataset = self.data_patch(dataset, id, db_session)
+            dataset = self.data_patch(request, dataset, id, db_session)
 
             try:
                 dataset = self.serialize_patch(dataset)
@@ -227,7 +234,7 @@ class ModelResource(BaseResource):
 
         return dataset
 
-    def data_patch(self, dataset, id, db_session):
+    def data_patch(self, request, dataset, id, db_session):
         models = []
 
         for data in dataset:
@@ -245,6 +252,8 @@ class ModelResource(BaseResource):
             for key in data:
                 setattr(model, key, data[key])
 
+            model = self.before_save(request, model, db_session)
+
             models.append(model)
 
         if not models:
@@ -258,7 +267,18 @@ class ModelResource(BaseResource):
 
         return models
 
-    def data_delete(self, dataset, id):
+    def data_set(self, model, data):
+        model = self.model()
+        for key in data:
+            if hasattr(model, key):
+                setattr(model, key, data[key])
+
+        return model
+
+    def before_save(self, request, resource, db_session):
+        return resource
+
+    def data_delete(self, request, dataset, id):
         with session.make(self.db_engine) as db_session:
             for data in dataset:
                 id = data.pop(self.id_field, id)
