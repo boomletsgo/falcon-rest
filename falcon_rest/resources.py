@@ -61,7 +61,7 @@ class BaseResource(object):
 
         return data
 
-    def data_list(self, request, data_filters, db_session):
+    def data_list(self, request, data_filters):
         return []
 
     def serialize_list(self, data):
