@@ -208,7 +208,7 @@ class ModelResource(BaseResource):
 
         for data in dataset:
             model = self.data_set(self.model, data)
-            model = self.before_save(request, model, db_session)
+            model = self.before_save(request, model, data, db_session)
             models.append(model)
 
         if models:
@@ -252,7 +252,7 @@ class ModelResource(BaseResource):
             for key in data:
                 setattr(model, key, data[key])
 
-            model = self.before_save(request, model, db_session)
+            model = self.before_save(request, model, data, db_session)
 
             models.append(model)
 
@@ -275,7 +275,7 @@ class ModelResource(BaseResource):
 
         return model
 
-    def before_save(self, request, resource, db_session):
+    def before_save(self, request, resource, data, db_session):
         return resource
 
     def data_delete(self, request, dataset, id):

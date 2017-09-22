@@ -21,7 +21,7 @@ setup(
     author='Jordan Ambra',
     author_email='jordan@serenitysoftware.io',
     url='https://github.com/boomletsgo/falcon-rest',
-    version='0.1.1',
+    version='0.1.2',
     classifiers=classifiers,
     description='Falcon REST framework for API automation',
     keywords='falcon rest framework json',
